@@ -37,11 +37,16 @@
       align-items: center;
     }
 
-    .autocomplete-results .result-item img {
-      width: 24px;
-      height: 24px;
+    .autocomplete-results .result-item .user-avatar {
+      width: 32px;
+      height: 32px;
       border-radius: 50%;
-      margin-right: 10px;
+      background-color: #0078d4; /* Fluent UI primary color */
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 14px;
     }
 
     .autocomplete-results .result-item .user-info {
@@ -84,6 +89,18 @@
     .selected-user .delete-icon:hover {
       color: red;
     }
+    
+    .selected-initials {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background-color: #0078d4; /* Fluent UI primary color */
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 14px;
+    }
 
     .input-search {
       border: none;
@@ -103,6 +120,11 @@
     </div>
     <input id="inputSearch" class="input-search" placeholder="Enter at least 3 characters">
     <div id="autocompleteResults" class="autocomplete-results"></div>
+  </div>
+
+  <div class="container mt-3">
+    <button id="getSelectedValueBtn" class="btn btn-primary">Get Selected Value</button>
+    <button id="toggleControlBtn" class="btn btn-secondary ms-2">Toggle Control</button>
   </div>
 </div>
 
@@ -137,7 +159,7 @@
       if (results.length > 0) {
         results.forEach(function (result) {
           let item = $('<div class="result-item"></div>');
-          let userAvatar = $('<img src="https://via.placeholder.com/150" alt="User Avatar">');
+          let userAvatar = $('<div class="user-avatar"></div>').text(getInitials(result.firstName));
           let userInfo = $('<div class="user-info"></div>');
           let userName = $('<div class="user-name"></div>').text(result.firstName);
           let userEmail = $('<div class="user-email"></div>').text(result.email);
@@ -158,14 +180,43 @@
     }
 
     function selectUser(name) {
-      let selectedUser = $('<div class="selected-user"></div>').text(name);
+      let initials = getInitials(name);
+      let selectedUser = $('<div class="selected-user"></div>');
+      let selectedInitials = $('<div class="selected-initials"></div>').text(initials);
+      let selectedInfo = $('<div class="selected-info"></div>').text(name);
+      selectedUser.append(selectedInitials, selectedInfo);
       let deleteIcon = $('<span class="delete-icon">&times;</span>');
       selectedUser.append(deleteIcon);
       selectedUsersContainer.append(selectedUser);
       deleteIcon.on('click', function () {
-        selectedUser.remove();
+        if (!inputSearch.prop('disabled')) {
+          selectedUser.remove();
+        }
       });
       autocompleteResults.hide();
+    }
+
+    $('#getSelectedValueBtn').on('click', function () {
+      let selectedValues = [];
+      selectedUsersContainer.find('.selected-info').each(function () {
+        selectedValues.push($(this).text());
+      });
+      alert('Selected Values: ' + selectedValues.join(', '));
+    });
+
+    $('#toggleControlBtn').on('click', function () {
+      inputSearch.prop('disabled', function (i, val) {
+        return !val;
+      });
+      if (inputSearch.prop('disabled')) {
+        $(this).text('Enable Control');
+      } else {
+        $(this).text('Disable Control');
+      }
+    });
+
+    function getInitials(name) {
+      return name.split(' ').map(function (part) { return part[0]; }).join('').toUpperCase();
     }
   });
 </script>
