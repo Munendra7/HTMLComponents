@@ -6,142 +6,47 @@
   <title>People Picker</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    .autocomplete-container {
-      position: relative;
-      display: flex;
-      align-items: center;
-      border: 1px solid #ced4da;
-      border-radius: 4px;
-      padding: 5px;
-    }
-
-    .autocomplete-results {
-      display: none;
-      position: absolute;
-      background-color: #fff;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-      width: 100%;
-      max-height: 200px;
-      overflow-y: auto;
-      z-index: 1000;
-      top: calc(100% + 5px);
-      left: 0;
-    }
-
-    .autocomplete-results .result-item {
-      padding: 8px 12px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-    }
-
-    .autocomplete-results .result-item .user-avatar {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      background-color: #0078d4; /* Fluent UI primary color */
-      color: #fff;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-size: 14px;
-    }
-
-    .autocomplete-results .result-item .user-info {
-      flex: 1;
-    }
-
-    .autocomplete-results .result-item .user-name {
-      font-weight: bold;
-    }
-
-    .autocomplete-results .result-item .user-email {
-      color: #666;
-    }
-
-    .autocomplete-results .result-item:hover {
-      background-color: #f0f0f0;
-    }
-
-    .selected-user-container {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    .selected-user {
-      display: inline-flex;
-      align-items: center;
-      background-color: #f0f0f0;
-      border-radius: 4px;
-      padding: 5px 10px;
-      margin-right: 5px;
-      margin-bottom: 5px;
-    }
-
-    .selected-user .delete-icon {
-      margin-left: 5px;
-      cursor: pointer;
-    }
-
-    .selected-user .delete-icon:hover {
-      color: red;
-    }
-    
-    .selected-initials {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      background-color: #0078d4; /* Fluent UI primary color */
-      color: #fff;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-size: 14px;
-    }
-
-    .input-search {
-      border: none;
-      outline: none;
-      flex-grow: 1;
-    }
-
+    .autocomplete-container {position: relative; display: flex; align-items: center; border: 1px solid #ced4da; border-radius: 4px; padding: 5px;}
+    .autocomplete-results {display: none; position: absolute; background-color: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); width: 100%; max-height: 200px; overflow-y: auto; z-index: 1000; top: calc(100% + 5px); left: 0;}
+    .autocomplete-results .result-item {padding: 8px 12px; cursor: pointer; display: flex; align-items: center;}
+    .autocomplete-results .result-item .user-avatar, .selected-initials {width: 32px; height: 32px; border-radius: 50%; background-color: #0078d4; color: #fff; display: flex; justify-content: center; align-items: center; font-size: 14px;}
+    .autocomplete-results .result-item .user-info {flex: 1;}
+    .autocomplete-results .result-item .user-name {font-weight: bold;}
+    .autocomplete-results .result-item .user-email {color: #666;}
+    .autocomplete-results .result-item:hover {background-color: #f0f0f0;}
+    .selected-user-container {display: flex; align-items: center; flex-wrap: wrap;}
+    .selected-user {display: inline-flex; align-items: center; background-color: #f0f0f0; border-radius: 4px; padding: 5px 10px; margin-right: 5px; margin-bottom: 5px;}
+    .selected-user .delete-icon {margin-left: 5px; cursor: pointer;}
+    .selected-user .delete-icon:hover {color: red;}
+    .input-search {border: none; outline: none; flex-grow: 1;}
   </style>
 </head>
 <body>
-
 <div class="container mt-5">
   <h1>People Picker</h1>
   <div class="autocomplete-container">
-    <div id="selectedUsers" class="selected-user-container">
-      <!-- Selected values will be displayed here -->
-    </div>
+    <div id="selectedUsers" class="selected-user-container"></div>
     <input id="inputSearch" class="input-search" placeholder="Enter at least 3 characters">
     <div id="autocompleteResults" class="autocomplete-results"></div>
   </div>
-
   <div class="container mt-3">
     <button id="getSelectedValueBtn" class="btn btn-primary">Get Selected Value</button>
     <button id="toggleControlBtn" class="btn btn-secondary ms-2">Toggle Control</button>
   </div>
 </div>
-
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
 <script>
-  $(document).ready(function () {
-    let selectedUsersContainer = $('#selectedUsers');
-    let inputSearch = $('#inputSearch');
-    let autocompleteResults = $('#autocompleteResults');
+  $(function () {
+    const selectedUsersContainer = $('#selectedUsers');
+    const inputSearch = $('#inputSearch');
+    const autocompleteResults = $('#autocompleteResults');
 
     inputSearch.on('input', function () {
-      let searchText = $(this).val().trim();
+      const searchText = $(this).val().trim();
       if (searchText.length >= 3) {
         $.ajax({
           url: `https://dummyjson.com/users/search?q=${searchText}`,
           method: 'GET',
-          data: { query: searchText },
           success: function (data) {
             displayResults(data.users);
           },
@@ -157,19 +62,17 @@
     function displayResults(results) {
       autocompleteResults.empty();
       if (results.length > 0) {
-        results.forEach(function (result) {
-          let item = $('<div class="result-item"></div>');
-          let userAvatar = $('<div class="user-avatar"></div>').text(getInitials(result.firstName));
-          let userInfo = $('<div class="user-info"></div>');
-          let userName = $('<div class="user-name"></div>').text(result.firstName);
-          let userEmail = $('<div class="user-email"></div>').text(result.email);
+        results.forEach(result => {
+          const item = $('<div class="result-item"></div>');
+          const userAvatar = $('<div class="user-avatar"></div>').text(getInitials(result.firstName));
+          const userInfo = $('<div class="user-info"></div>');
+          const userName = $('<div class="user-name"></div>').text(result.firstName);
+          const userEmail = $('<div class="user-email"></div>').text(result.email);
           userInfo.append(userName, userEmail);
-          item.append(userAvatar, userInfo);
-          item.on('click', function () {
-            selectedUsersContainer.empty(); // Clear previously selected user
+          item.append(userAvatar, userInfo).on('click', () => {
+            selectedUsersContainer.empty();
             selectUser(result.firstName);
-            inputSearch.val(''); // Clear input after selection
-            inputSearch.blur(); // Blur input after selection
+            inputSearch.val('').blur();
           });
           autocompleteResults.append(item);
         });
@@ -180,46 +83,36 @@
     }
 
     function selectUser(name) {
-      let initials = getInitials(name);
-      let selectedUser = $('<div class="selected-user"></div>');
-      let selectedInitials = $('<div class="selected-initials"></div>').text(initials);
-      let selectedInfo = $('<div class="selected-info"></div>').text(name);
+      const initials = getInitials(name);
+      const selectedUser = $('<div class="selected-user"></div>');
+      const selectedInitials = $('<div class="selected-initials"></div>').text(initials);
+      const selectedInfo = $('<div class="selected-info"></div>').text(name);
       selectedUser.append(selectedInitials, selectedInfo);
-      let deleteIcon = $('<span class="delete-icon">&times;</span>');
+      const deleteIcon = $('<span class="delete-icon">&times;</span>').on('click', () => {
+        if (!inputSearch.prop('disabled')) selectedUser.remove();
+      });
       selectedUser.append(deleteIcon);
       selectedUsersContainer.append(selectedUser);
-      deleteIcon.on('click', function () {
-        if (!inputSearch.prop('disabled')) {
-          selectedUser.remove();
-        }
-      });
       autocompleteResults.hide();
     }
 
-    $('#getSelectedValueBtn').on('click', function () {
-      let selectedValues = [];
+    $('#getSelectedValueBtn').on('click', () => {
+      const selectedValues = [];
       selectedUsersContainer.find('.selected-info').each(function () {
         selectedValues.push($(this).text());
       });
       alert('Selected Values: ' + selectedValues.join(', '));
     });
 
-    $('#toggleControlBtn').on('click', function () {
-      inputSearch.prop('disabled', function (i, val) {
-        return !val;
-      });
-      if (inputSearch.prop('disabled')) {
-        $(this).text('Enable Control');
-      } else {
-        $(this).text('Disable Control');
-      }
+    $('#toggleControlBtn').on('click', () => {
+      inputSearch.prop('disabled', (i, val) => !val);
+      $(this).text(inputSearch.prop('disabled') ? 'Enable Control' : 'Disable Control');
     });
 
     function getInitials(name) {
-      return name.split(' ').map(function (part) { return part[0]; }).join('').toUpperCase();
+      return name.split(' ').map(part => part[0]).join('').toUpperCase();
     }
   });
 </script>
-
 </body>
 </html>
