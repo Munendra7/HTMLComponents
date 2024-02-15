@@ -82,17 +82,21 @@
     }
 
     function selectUser(name) {
-      const initials = getInitials(name);
-      const selectedUser = $('<div class="selected-user"></div>');
-      const selectedInitials = $('<div class="selected-initials"></div>').text(initials);
-      const selectedInfo = $('<div class="selected-info"></div>').text(name);
-      selectedUser.append(selectedInitials, selectedInfo);
-      const deleteIcon = $('<span class="delete-icon">&times;</span>').on('click', () => {
-        selectedUser.remove();
-      });
-      selectedUser.append(deleteIcon);
-      selectedUsersContainer.append(selectedUser);
-      autocompleteResults.hide();
+      if (!selectedUsersContainer.find('.selected-info:contains("' + name + '")').length) {
+        const initials = getInitials(name);
+        const selectedUser = $('<div class="selected-user"></div>');
+        const selectedInitials = $('<div class="selected-initials"></div>').text(initials);
+        const selectedInfo = $('<div class="selected-info"></div>').text(name);
+        selectedUser.append(selectedInitials, selectedInfo);
+        const deleteIcon = $('<span class="delete-icon">&times;</span>').on('click', () => {
+          selectedUser.remove();
+        });
+        selectedUser.append(deleteIcon);
+        selectedUsersContainer.append(selectedUser);
+        autocompleteResults.hide();
+      } else {
+        alert('User already selected');
+      }
     }
 
     $('#getSelectedValueBtn').on('click', () => {
