@@ -9,13 +9,14 @@
     .autocomplete-container {position: relative; display: flex; align-items: center; border: 1px solid #ced4da; border-radius: 4px; padding: 5px;}
     .autocomplete-results {display: none; position: absolute; background-color: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); width: 100%; max-height: 200px; overflow-y: auto; z-index: 1000; top: calc(100% + 5px); left: 0;}
     .autocomplete-results .result-item {padding: 8px 12px; cursor: pointer; display: flex; align-items: center;}
-    .autocomplete-results .result-item .user-avatar, .selected-initials {width: 32px; height: 32px; border-radius: 50%; background-color: #0078d4; color: #fff; display: flex; justify-content: center; align-items: center; font-size: 14px;}
+    .autocomplete-results .result-item .user-avatar, .selected-initials {width: 32px; height: 32px; border-radius: 50%; color: #fff; display: flex; justify-content: center; align-items: center; font-size: 14px;}
+    .autocomplete-results .result-item .user-avatar {background-color: #0078d4;} /* Default avatar color */
     .autocomplete-results .result-item .user-info {flex: 1;}
     .autocomplete-results .result-item .user-name {font-weight: bold;}
     .autocomplete-results .result-item .user-email {color: #666;}
     .autocomplete-results .result-item:hover {background-color: #f0f0f0;}
     .selected-user-container {display: flex; align-items: center; flex-wrap: wrap;}
-    .selected-user {display: inline-flex; align-items: center; background-color: #f0f0f0; border-radius: 4px; padding: 5px 10px; margin-right: 5px; margin-bottom: 5px;}
+    .selected-user {display: inline-flex; align-items: center; border-radius: 4px; padding: 3px 8px; margin-right: 5px; margin-bottom: 5px;} /* Adjusted padding */
     .selected-user .delete-icon {margin-left: 5px; cursor: pointer;}
     .selected-user .delete-icon:hover {color: red;}
     .input-search {border: none; outline: none; flex-grow: 1; min-width: 100px;} /* Adjusted min-width */
@@ -70,6 +71,7 @@
         results.forEach(result => {
           const item = $('<div class="result-item"></div>');
           const userAvatar = $('<div class="user-avatar"></div>').text(getInitials(result.firstName));
+          userAvatar.css('background-color', getAvatarColor(result.firstName)); // Dynamically set avatar color
           const userInfo = $('<div class="user-info"></div>');
           const userName = $('<div class="user-name"></div>').text(result.firstName);
           const userEmail = $('<div class="user-email"></div>').text(result.email);
@@ -91,6 +93,7 @@
       const initials = getInitials(name);
       const selectedUser = $('<div class="selected-user"></div>');
       const selectedInitials = $('<div class="selected-initials"></div>').text(initials);
+      selectedInitials.css('background-color', getAvatarColor(name)); // Apply background color
       const selectedInfo = $('<div class="selected-info"></div>').text(name);
       selectedUser.append(selectedInitials, selectedInfo);
       const deleteIcon = $('<span class="delete-icon">&times;</span>').on('click', () => {
@@ -116,6 +119,14 @@
 
     function getInitials(name) {
       return name.split(' ').map(part => part[0]).join('').toUpperCase();
+    }
+    
+    // Function to get color based on initials
+    function getAvatarColor(name) {
+      // Hash the name to get a color value
+      const hash = name.split('').reduce((acc, char) => char.charCodeAt(0) + acc, 0);
+      const hue = hash % 360; // Use hash to get a hue value
+      return `hsl(${hue}, 70%, 50%)`; // Return color in HSL format
     }
   });
 </script>
