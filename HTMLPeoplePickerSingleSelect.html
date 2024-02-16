@@ -18,7 +18,7 @@
     .selected-user {display: inline-flex; align-items: center; background-color: #f0f0f0; border-radius: 4px; padding: 5px 10px; margin-right: 5px; margin-bottom: 5px;}
     .selected-user .delete-icon {margin-left: 5px; cursor: pointer;}
     .selected-user .delete-icon:hover {color: red;}
-    .input-search {border: none; outline: none; flex-grow: 1;}
+    .input-search {border: none; outline: none; flex-grow: 1; min-width: 100px;} /* Adjusted min-width */
   </style>
 </head>
 <body>
@@ -40,20 +40,25 @@
     const selectedUsersContainer = $('#selectedUsers');
     const inputSearch = $('#inputSearch');
     const autocompleteResults = $('#autocompleteResults');
+    let typingTimer;
 
     inputSearch.on('input', function () {
+      clearTimeout(typingTimer);
       const searchText = $(this).val().trim();
       if (searchText.length >= 3) {
-        $.ajax({
-          url: `https://dummyjson.com/users/search?q=${searchText}`,
-          method: 'GET',
-          success: function (data) {
-            displayResults(data.users);
-          },
-          error: function (xhr, status, error) {
-            console.error(status, error);
-          }
-        });
+        autocompleteResults.html('<div class="result-item">Searching...</div>').show();
+        typingTimer = setTimeout(() => {
+          $.ajax({
+            url: `https://dummyjson.com/users/search?q=${searchText}`,
+            method: 'GET',
+            success: function (data) {
+              displayResults(data.users);
+            },
+            error: function (xhr, status, error) {
+              console.error(status, error);
+            }
+          });
+        }, 500);
       } else {
         autocompleteResults.empty().hide();
       }
@@ -111,16 +116,6 @@
 
     function getInitials(name) {
       return name.split(' ').map(part => part[0]).join('').toUpperCase();
-    }
-    function preSelectValue(value) {
-    $('#selectedUsers').append(`<div class="selected-user">
-            <div class="selected-initials">${value.charAt(0).toUpperCase()}</div>
-            <div class="selected-info">${value}</div>
-            <span class="delete-icon">&times;</span>
-        </div>`);
-        $('#inputSearch').prop('disabled', true);
-        disabledSelectedValues.push(value);
-        $('#toggleControlBtn').text('Enable Control');
     }
   });
 </script>
