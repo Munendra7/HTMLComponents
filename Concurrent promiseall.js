@@ -25,11 +25,8 @@ async function fetchAllDataFromDataverse(api) {
         const promises = [];
         while (response["@odata.nextLink"]) {
             response = await fetchDataFromDataverse(response["@odata.nextLink"]);
-            promises.push(response.value);
+            allData.push(...response.value);
         }
-
-        const additionalData = await Promise.all(promises);
-        allData.push(...additionalData.flat());
     } catch (error) {
         console.error(error);
     }
@@ -46,4 +43,4 @@ $('#toggleControlBtn').on('click', async () => {
 });
 ```
 
-In this version, `Promise.all()` is used to fetch multiple pages concurrently, reducing the overall time to fetch all data. This should significantly improve the performance and fetch all data in a much shorter time compared to fetching pages sequentially. Adjusting the pagination size may further optimize performance, but it depends on factors such as server capacity and network speed.
+Now, all the fetched data from each page will be properly concatenated into the `allData` array, ensuring that all data is returned and logged correctly. This should resolve the issue of only returning the first set of data.
