@@ -1,90 +1,298 @@
-using System;
-using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
+using DiffPlex.DiffBuilder;
+using DiffPlex.DiffBuilder.Model;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.Agents;
+using Microsoft.SemanticKernel.Agents.Chat;
 
-class Program
+// ======= CONFIG =======
+const string org = "<your-org>";
+const string project = "<your-project>";
+const string repoId = "<your-repo-id-or-name>";
+const int pullRequestId = 1234; // PR number
+const string pat = "<your-PAT-with-vso.code_write or vso.threads_full>";
+const string baseUrl = "https://dev.azure.com";
+const string apiVersion = "7.1";
+
+// Semantic Kernel config
+const string openAiModel = "gpt-4o-mini";        // or your model
+const string openAiApiKey = "<OPENAI_API_KEY>";  // or Azure OpenAI settings (see comment below)
+
+// Your review policy/guidelines given to the AI
+string reviewGuidelines = """
+You are a strict code reviewer. For the provided diff hunk:
+- Cite specific lines within the hunk.
+- Prefer small, actionable comments.
+- Flag: security, performance, correctness, readability, tests, style.
+- If OK, return an empty list.
+
+FORMAT (strict JSON):
 {
-    static async Task Main(string[] args)
+  "comments": [
     {
-        string orgUrl = "https://dev.azure.com/{organization}";
-        string project = "{project}";
-        string repositoryId = "{repoId}";
-        int pullRequestId = 123; // PR ID
-        string personalAccessToken = "{PAT}";
+      "title": "short summary",
+      "message": "clear, actionable explanation with suggestion",
+      "line": <lineNumberOnRightSide>,     // 1-based line number within the *new* file content
+      "severity": "info|nit|warning|error"
+    }
+  ]
+}
+""";
+// ======================
 
-        using (var client = new HttpClient())
+var http = new HttpClient { BaseAddress = new Uri($"{baseUrl}/{org}/{project}/_apis/") };
+var authToken = Convert.ToBase64String(Encoding.ASCII.GetBytes($":{pat}"));
+http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authToken);
+
+// 1) Work out the latest PR iteration (files tab defaults to latest)
+var iterations = await GET<List<GitPullRequestIteration>>(
+    $"git/repositories/{repoId}/pullRequests/{pullRequestId}/iterations?api-version={apiVersion}");
+
+int latestIterationId = iterations!.Max(i => i.id);
+
+// 2) Get the “Files” view style changes for that iteration
+var iterChanges = await GET<IterationChanges>(
+    $"git/repositories/{repoId}/pullRequests/{pullRequestId}/iterations/{latestIterationId}/changes?top=1000&api-version={apiVersion}");
+
+// 3) For each changed file, fetch before/after text and compute hunks
+var differ = new SideBySideDiffBuilder(new DiffPlex.Differ());
+
+// Build a SK Agent that will review each hunk
+var builder = Kernel.CreateBuilder()
+    .AddOpenAIChatCompletion(openAiModel, openAiApiKey); // If Azure OpenAI: .AddAzureOpenAIChatCompletion(deploymentName, endpoint, apiKey)
+Kernel kernel = builder.Build();
+
+var agent = new ChatCompletionAgent(new ChatCompletionAgentArguments
+{
+    Name = "CodeReviewer",
+    Instructions = reviewGuidelines,
+    Kernel = kernel
+});
+
+foreach (var change in iterChanges.changeEntries)
+{
+    if (change.changeType == "delete" || change.item?.path is null) continue;
+
+    string pathRight = change.item.path;
+    string? pathLeft = change.originalPath ?? pathRight;
+
+    // Pull the right/left file contents by *commit* at the iteration edges.
+    // For the right side, get the last commit of this iteration.
+    // For the left side, get the last commit of the previous iteration (or target branch tip at creation).
+    // This mimics the “files” tab comparison at iteration boundaries.
+
+    string rightCommitId = await GetIterationTipCommit(http, repoId, pullRequestId, latestIterationId);
+    string leftCommitId  = await GetIterationTipCommit(http, repoId, pullRequestId, Math.Max(1, latestIterationId - 1));
+
+    string rightText = await GetFileAtCommitAsync(http, repoId, pathRight, rightCommitId);
+    string leftText  = await GetFileAtCommitAsync(http, repoId, pathLeft, leftCommitId);
+
+    // Compute diff model with context — similar to ADO files tab (inline/side-by-side)
+    var sideBySide = differ.BuildDiffModel(leftText ?? "", rightText ?? "");
+
+    // Convert to “hunks”: contiguous added/removed/modified blocks on the RIGHT
+    foreach (var hunk in HunksFrom(sideBySide, isRightSide: true))
+    {
+        // 4) Ask the agent to review each hunk individually (better, more focused comments)
+        string payload = BuildHunkPrompt(pathRight, rightText, hunk);
+        var thread = new ChatHistory();
+        thread.AddUserMessage(payload);
+
+        var responses = agent.InvokeAsync(thread);
+        var sb = new StringBuilder();
+        await foreach (var resp in responses)
         {
-            client.DefaultRequestHeaders.Accept.Add(
-                new MediaTypeWithQualityHeaderValue("application/json"));
+            sb.Append(resp.Content);
+        }
 
-            // Basic auth with PAT
-            var authToken = Convert.ToBase64String(
-                System.Text.Encoding.ASCII.GetBytes($":{personalAccessToken}"));
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", authToken);
+        var ai = ParseAiJson(sb.ToString());
 
-            // Step 1: Get iterations (to find latest iteration)
-            var iterationsUrl =
-                $"{orgUrl}/{project}/_apis/git/repositories/{repositoryId}/pullRequests/{pullRequestId}/iterations?api-version=7.0";
-            var iterResp = await client.GetAsync(iterationsUrl);
-            iterResp.EnsureSuccessStatusCode();
-
-            var iterJson = await iterResp.Content.ReadAsStringAsync();
-            var iterDoc = JsonDocument.Parse(iterJson);
-            int lastIterationId = iterDoc.RootElement
-                .GetProperty("value")[^1] // last iteration
-                .GetProperty("id").GetInt32();
-
-            Console.WriteLine($"Latest iteration: {lastIterationId}");
-
-            // Step 2: Get changes for the latest iteration
-            var changesUrl =
-                $"{orgUrl}/{project}/_apis/git/repositories/{repositoryId}/pullRequests/{pullRequestId}/iterations/{lastIterationId}/changes?api-version=7.0";
-            var changesResp = await client.GetAsync(changesUrl);
-            changesResp.EnsureSuccessStatusCode();
-
-            var changesJson = await changesResp.Content.ReadAsStringAsync();
-            var changesDoc = JsonDocument.Parse(changesJson);
-
-            Console.WriteLine("\n=== Diffs in PR ===");
-
-            foreach (var change in changesDoc.RootElement.GetProperty("changes").EnumerateArray())
+        // 5) Post comments back to PR at the exact lines (Files tab coordinates)
+        foreach (var c in ai.Comments)
+        {
+            // ADO’s Threads API expects rightFileStart/rightFileEnd and optionally changeTrackingId.
+            var body = new
             {
-                var item = change.GetProperty("item");
-                string path = item.GetProperty("path").GetString();
-                Console.WriteLine($"\nFile: {path}");
-
-                if (change.TryGetProperty("diffHunks", out var hunks))
+                comments = new[]
                 {
-                    foreach (var hunk in hunks.EnumerateArray())
-                    {
-                        foreach (var line in hunk.GetProperty("diffLines").EnumerateArray())
-                        {
-                            string lineType = line.GetProperty("lineType").GetString(); // "added", "removed", "context"
-                            string text = line.GetProperty("content").GetString();
-
-                            switch (lineType)
-                            {
-                                case "added":
-                                    Console.WriteLine("+" + text);
-                                    break;
-                                case "removed":
-                                    Console.WriteLine("-" + text);
-                                    break;
-                                default:
-                                    Console.WriteLine(" " + text);
-                                    break;
-                            }
-                        }
-                    }
-                }
-                else
+                    new { content = $"**{c.title}**\n\n{c.message}" }
+                },
+                status = "active",
+                threadContext = new
                 {
-                    Console.WriteLine("(no diff available, maybe binary file)");
-                }
-            }
+                    filePath = pathRight
+                },
+                pullRequestThreadContext = new
+                {
+                    changeTrackingId = change.changeTrackingId // pins across iterations
+                },
+                // Position relative to the RIGHT (new) file:
+                rightFileStart = new { line = c.line, offset = 1 },
+                rightFileEnd   = new { line = c.line, offset = 1 }
+            };
+
+            var url = $"git/repositories/{repoId}/pullRequests/{pullRequestId}/threads?api-version={apiVersion}";
+            var res = await http.PostAsJsonAsync(url, body);
+            res.EnsureSuccessStatusCode();
         }
     }
+}
+
+Console.WriteLine("Done.");
+
+
+// ===================== helpers / models =====================
+
+static async Task<T?> GET<T>(string relative) where T : class
+{
+    using var local = new HttpClient();
+    return default; // placeholder to satisfy compiler (replaced below)
+}
+
+// Overload bound to outer `http`
+async Task<T?> GET<T>(string relative, HttpClient? c = null) where T : class
+{
+    var res = await http.GetAsync(relative);
+    res.EnsureSuccessStatusCode();
+    var text = await res.Content.ReadAsStringAsync();
+    return JsonSerializer.Deserialize<T>(text, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+}
+
+static async Task<string> GetIterationTipCommit(HttpClient http, string repoId, int prId, int iterationId)
+{
+    // GET commits for iteration; last one is the “tip” for that iteration.
+    var url = $"git/repositories/{repoId}/pullRequests/{prId}/iterations/{iterationId}/commits?api-version=7.1";
+    var res = await http.GetAsync(url); res.EnsureSuccessStatusCode();
+    var json = await res.Content.ReadAsStringAsync();
+    var data = JsonSerializer.Deserialize<IterationCommits>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    return data!.value.Last().commitId;
+}
+
+static async Task<string> GetFileAtCommitAsync(HttpClient http, string repoId, string path, string commitId)
+{
+    // Items - Get (Git): includeContent=true & versionDescriptor=commit
+    var url = $"git/repositories/{repoId}/items?path={Uri.EscapeDataString(path)}&includeContent=true&versionDescriptor.versionType=commit&versionDescriptor.version={commitId}&api-version=7.1";
+    var res = await http.GetAsync(url); res.EnsureSuccessStatusCode();
+    // If content is returned as JSON { content: "..."} handle; if raw stream, read string.
+    var contentType = res.Content.Headers.ContentType?.MediaType ?? "";
+    if (contentType.Contains("application/json"))
+    {
+        var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        return doc.RootElement.GetProperty("content").GetString() ?? "";
+    }
+    return await res.Content.ReadAsStringAsync();
+}
+
+static IEnumerable<Hunk> HunksFrom(SideBySideDiffModel model, bool isRightSide)
+{
+    // Collapse contiguous changed lines into minimal hunks (like ADO’s Files tab)
+    var rightLines = model.NewText.Lines;
+    int i = 0;
+    while (i < rightLines.Count)
+    {
+        // Find start of a change block
+        if (rightLines[i].Type == ChangeType.Unchanged)
+        {
+            i++;
+            continue;
+        }
+        int start = i;
+        int end = i;
+        while (end + 1 < rightLines.Count && rightLines[end + 1].Type != ChangeType.Unchanged)
+            end++;
+
+        // Expand with a small context (3 lines) like typical UI
+        int context = 3;
+        int hStart = Math.Max(0, start - context);
+        int hEnd = Math.Min(rightLines.Count - 1, end + context);
+
+        yield return new Hunk
+        {
+            RightStartLine = hStart + 1,               // 1-based
+            RightEndLine = hEnd + 1,
+            Lines = rightLines.Skip(hStart).Take(hEnd - hStart + 1).ToList()
+        };
+
+        i = end + 1;
+    }
+}
+
+static string BuildHunkPrompt(string path, string rightFullText, Hunk h)
+{
+    // Extract just the hunk text and send to the agent
+    var sb = new StringBuilder();
+    sb.AppendLine($"FILE: {path}");
+    sb.AppendLine($"HUNK: right lines {h.RightStartLine}-{h.RightEndLine}");
+    sb.AppendLine("```diff");
+    foreach (var l in h.Lines)
+    {
+        var prefix = l.Type switch
+        {
+            ChangeType.Inserted => "+ ",
+            ChangeType.Deleted  => "- ",
+            ChangeType.Modified => "~ ",
+            _ => "  "
+        };
+        sb.AppendLine(prefix + l.Text);
+    }
+    sb.AppendLine("```");
+    sb.AppendLine("Return strictly the requested JSON format.");
+    return sb.ToString();
+}
+
+// very small JSON shape for AI response
+static AiResponse ParseAiJson(string s)
+{
+    try
+    {
+        using var doc = JsonDocument.Parse(s);
+        var comments = new List<AiComment>();
+        if (doc.RootElement.TryGetProperty("comments", out var arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var el in arr.EnumerateArray())
+            {
+                comments.Add(new AiComment
+                {
+                    title = el.GetProperty("title").GetString() ?? "Review",
+                    message = el.GetProperty("message").GetString() ?? "",
+                    line = el.GetProperty("line").GetInt32(),
+                    severity = el.GetProperty("severity").GetString() ?? "info"
+                });
+            }
+        }
+        return new AiResponse { Comments = comments };
+    }
+    catch
+    {
+        // If the model goes off-format, just skip.
+        return new AiResponse { Comments = new() };
+    }
+}
+
+record AiResponse { public List<AiComment> Comments { get; set; } = new(); }
+record AiComment { public string title { get; set; } = ""; public string message { get; set; } = ""; public int line { get; set; } ; public string severity { get; set; } = "info"; }
+
+record IterationCommits { public List<CommitRef> value { get; set; } = new(); }
+record CommitRef { public string commitId { get; set; } = ""; }
+
+record IterationChanges { public List<ChangeEntry> changeEntries { get; set; } = new(); }
+record ChangeEntry
+{
+    public string changeType { get; set; } = "";
+    public int changeTrackingId { get; set; }
+    public GitItem? item { get; set; }
+    public string? originalPath { get; set; }
+}
+record GitItem { public string? path { get; set; } }
+
+record GitPullRequestIteration { public int id { get; set; } }
+
+class Hunk
+{
+    public int RightStartLine { get; set; }
+    public int RightEndLine { get; set; }
+    public List<DiffPiece> Lines { get; set; } = new();
 }
