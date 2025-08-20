@@ -1,0 +1,90 @@
+using System;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+class Program
+{
+    static async Task Main(string[] args)
+    {
+        string orgUrl = "https://dev.azure.com/{organization}";
+        string project = "{project}";
+        string repositoryId = "{repoId}";
+        int pullRequestId = 123; // PR ID
+        string personalAccessToken = "{PAT}";
+
+        using (var client = new HttpClient())
+        {
+            client.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json"));
+
+            // Basic auth with PAT
+            var authToken = Convert.ToBase64String(
+                System.Text.Encoding.ASCII.GetBytes($":{personalAccessToken}"));
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Basic", authToken);
+
+            // Step 1: Get iterations (to find latest iteration)
+            var iterationsUrl =
+                $"{orgUrl}/{project}/_apis/git/repositories/{repositoryId}/pullRequests/{pullRequestId}/iterations?api-version=7.0";
+            var iterResp = await client.GetAsync(iterationsUrl);
+            iterResp.EnsureSuccessStatusCode();
+
+            var iterJson = await iterResp.Content.ReadAsStringAsync();
+            var iterDoc = JsonDocument.Parse(iterJson);
+            int lastIterationId = iterDoc.RootElement
+                .GetProperty("value")[^1] // last iteration
+                .GetProperty("id").GetInt32();
+
+            Console.WriteLine($"Latest iteration: {lastIterationId}");
+
+            // Step 2: Get changes for the latest iteration
+            var changesUrl =
+                $"{orgUrl}/{project}/_apis/git/repositories/{repositoryId}/pullRequests/{pullRequestId}/iterations/{lastIterationId}/changes?api-version=7.0";
+            var changesResp = await client.GetAsync(changesUrl);
+            changesResp.EnsureSuccessStatusCode();
+
+            var changesJson = await changesResp.Content.ReadAsStringAsync();
+            var changesDoc = JsonDocument.Parse(changesJson);
+
+            Console.WriteLine("\n=== Diffs in PR ===");
+
+            foreach (var change in changesDoc.RootElement.GetProperty("changes").EnumerateArray())
+            {
+                var item = change.GetProperty("item");
+                string path = item.GetProperty("path").GetString();
+                Console.WriteLine($"\nFile: {path}");
+
+                if (change.TryGetProperty("diffHunks", out var hunks))
+                {
+                    foreach (var hunk in hunks.EnumerateArray())
+                    {
+                        foreach (var line in hunk.GetProperty("diffLines").EnumerateArray())
+                        {
+                            string lineType = line.GetProperty("lineType").GetString(); // "added", "removed", "context"
+                            string text = line.GetProperty("content").GetString();
+
+                            switch (lineType)
+                            {
+                                case "added":
+                                    Console.WriteLine("+" + text);
+                                    break;
+                                case "removed":
+                                    Console.WriteLine("-" + text);
+                                    break;
+                                default:
+                                    Console.WriteLine(" " + text);
+                                    break;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("(no diff available, maybe binary file)");
+                }
+            }
+        }
+    }
+}
