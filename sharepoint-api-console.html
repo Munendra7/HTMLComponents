@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SharePoint Online API Console Scripts</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        pre {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 10px;
+            overflow-x: auto;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        code {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .copy-btn:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+        }
+        .section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .note {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        .usage {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 SharePoint Online API Console Scripts</h1>
+        
+        <div class="section">
+            <h2>📁 1. Fetch Documents with Pagination (RenderListDataAsStream)</h2>
+            <div class="note">
+                <strong>Note:</strong> Replace placeholders with your actual SharePoint site URL, library name, and ensure you have proper authentication.
+            </div>
+            <pre><code id="code1">// SharePoint Online - Fetch Documents with Pagination using RenderListDataAsStream
+// This can be run directly from browser console when authenticated to SharePoint
+
+class SharePointDocumentFetcher {
+    constructor(siteUrl, listTitle) {
+        this.siteUrl = siteUrl;
+        this.listTitle = listTitle;
+        this.batchSize = 5;
+        this.allItems = [];
+    }
+
+    // Get request digest for POST operations
+    async getRequestDigest() {
+        const response = await fetch(`${this.siteUrl}/_api/contextinfo`, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json;odata=verbose',
+                'Content-Type': 'application/json;odata=verbose'
+            },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        return data.d.GetContextWebInformation.FormDigestValue;
+    }
+
+    // Fetch items with pagination
+    async fetchItemsWithPagination(folderServerRelativeUrl = null) {
+        const digest = await this.getRequestDigest();
+        let nextPagingInfo = null;
+        let pageNumber = 1;
+        
+        console.log('🔄 Starting to fetch items in batches of', this.batchSize);
+        
+        do {
+            console.log(`📄 Fetching page ${pageNumber}...`);
+            
+            const viewXml = this.buildViewXml(nextPagingInfo, folderServerRelativeUrl);
+            
+            const payload = {
+                parameters: {
+                    RenderOptions: 2,
+                    ViewXml: viewXml,
+                    AllowMultipleValueFilterForTaxonomyFields: true,
+                    AddRequiredFields: true,
+                    DatesInUtc: true
+                }
+            };
+
+            const response = await fetch(
+                `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/RenderListDataAsStream`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json;odata=nometadata',
+                        'Content-Type': 'application/json;odata=verbose',
+                        'X-RequestDigest': digest
+                    },
+                    body: JSON.stringify(payload),
+                    credentials: 'same-origin'
+                }
+            );
+
+            const data = await response.json();
+            
+            if (data.Row && data.Row.length > 0) {
+                const processedItems = this.processItems(data.Row);
+                this.allItems.push(...processedItems);
+                
+                console.log(`✅ Page ${pageNumber}: Found ${data.Row.length} items`);
+                processedItems.forEach(item => {
+                    console.log(`  ${item.isFolder ? '📁' : '📄'} ${item.name}`);
+                });
+            }
+            
+            // Check for next page
+            nextPagingInfo = data.NextHref ? this.extractPagingInfo(data.NextHref) : null;
+            pageNumber++;
+            
+        } while (nextPagingInfo);
+        
+        console.log(`\n✨ Total items fetched: ${this.allItems.length}`);
+        return this.allItems;
+    }
+
+    // Build ViewXml for query
+    buildViewXml(pagingInfo, folderUrl) {
+        let viewXml = `<View Scope="RecursiveAll">
+            <Query>
+                <OrderBy>
+                    <FieldRef Name="FSObjType" Ascending="FALSE" />
+                    <FieldRef Name="FileLeafRef" Ascending="TRUE" />
+                </OrderBy>`;
+        
+        if (folderUrl) {
+            viewXml += `
+                <Where>
+                    <Eq>
+                        <FieldRef Name="FileDirRef" />
+                        <Value Type="Text">${folderUrl}</Value>
+                    </Eq>
+                </Where>`;
+        }
+        
+        viewXml += `
+            </Query>
+            <ViewFields>
+                <FieldRef Name="ID" />
+                <FieldRef Name="FileLeafRef" />
+                <FieldRef Name="FSObjType" />
+                <FieldRef Name="FileRef" />
+                <FieldRef Name="FileDirRef" />
+                <FieldRef Name="File_x0020_Size" />
+                <FieldRef Name="Modified" />
+                <FieldRef Name="Created" />
+                <FieldRef Name="Editor" />
+                <FieldRef Name="Author" />
+                <FieldRef Name="ContentTypeId" />
+                <FieldRef Name="_UIVersionString" />
+            </ViewFields>
+            <RowLimit Paged="TRUE">${this.batchSize}</RowLimit>`;
+        
+        if (pagingInfo) {
+            viewXml += `<Paging PreviousPageData="${pagingInfo}" />`;
+        }
+        
+        viewXml += `</View>`;
+        
+        return viewXml;
+    }
+
+    // Process and format items
+    processItems(items) {
+        return items.map(item => ({
+            id: item.ID,
+            name: item.FileLeafRef,
+            isFolder: item.FSObjType === "1",
+            type: item.FSObjType === "1" ? "Folder" : "File",
+            serverRelativeUrl: item.FileRef,
+            folderPath: item.FileDirRef,
+            size: this.formatFileSize(item.File_x0020_Size),
+            sizeInBytes: parseInt(item.File_x0020_Size) || 0,
+            modified: item.Modified,
+            created: item.Created,
+            modifiedBy: item.Editor ? item.Editor[0].title : 'Unknown',
+            createdBy: item.Author ? item.Author[0].title : 'Unknown',
+            version: item._UIVersionString
+        }));
+    }
+
+    // Format file size
+    formatFileSize(bytes) {
+        if (!bytes || bytes === "0") return "0 Bytes";
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // Extract paging info from NextHref
+    extractPagingInfo(nextHref) {
+        const match = nextHref.match(/Paged=TRUE&p_ID=(\d+)/);
+        return match ? match[1] : null;
+    }
+
+    // Display results in console table
+    displayResults() {
+        console.table(this.allItems.map(item => ({
+            Type: item.isFolder ? '📁 Folder' : '📄 File',
+            Name: item.name,
+            Size: item.size,
+            Modified: new Date(item.modified).toLocaleDateString(),
+            ModifiedBy: item.modifiedBy
+        })));
+    }
+}
+
+// Usage Example
+async function fetchDocuments() {
+    // Replace with your actual SharePoint site URL and document library name
+    const siteUrl = 'https://yourtenant.sharepoint.com/sites/yoursite';
+    const libraryName = 'Documents'; // Or your document library name
+    
+    const fetcher = new SharePointDocumentFetcher(siteUrl, libraryName);
+    
+    try {
+        const items = await fetcher.fetchItemsWithPagination();
+        fetcher.displayResults();
+        
+        // Return items for further processing
+        return items;
+    } catch (error) {
+        console.error('❌ Error fetching documents:', error);
+    }
+}
+
+// Run the function
+// fetchDocuments();</code></pre>
+            <button class="copy-btn" onclick="copyCode('code1')">Copy Code</button>
+        </div>
+
+        <div class="section">
+            <h2>🔍 2. Search Files Inside Folder</h2>
+            <div class="usage">
+                <strong>Usage:</strong> This function searches for files within a specific folder using keywords.
+            </div>
+            <pre><code id="code2">// SharePoint Online - Search Files Inside Folder
+// Advanced search functionality with multiple search options
+
+class SharePointFolderSearch {
+    constructor(siteUrl, listTitle) {
+        this.siteUrl = siteUrl;
+        this.listTitle = listTitle;
+    }
+
+    // Get request digest
+    async getRequestDigest() {
+        const response = await fetch(`${this.siteUrl}/_api/contextinfo`, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json;odata=verbose',
+                'Content-Type': 'application/json;odata=verbose'
+            },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        return data.d.GetContextWebInformation.FormDigestValue;
+    }
+
+    // Search files in a specific folder
+    async searchInFolder(folderPath, searchTerm, searchOptions = {}) {
+        const digest = await this.getRequestDigest();
+        
+        console.log(`🔍 Searching for "${searchTerm}" in folder: ${folderPath}`);
+        
+        const viewXml = this.buildSearchViewXml(folderPath, searchTerm, searchOptions);
+        
+        const payload = {
+            parameters: {
+                RenderOptions: 2,
+                ViewXml: viewXml,
+                AllowMultipleValueFilterForTaxonomyFields: true,
+                AddRequiredFields: true
+            }
+        };
+
+        const response = await fetch(
+            `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/RenderListDataAsStream`,
+            {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json;odata=nometadata',
+                    'Content-Type': 'application/json;odata=verbose',
+                    'X-RequestDigest': digest
+                },
+                body: JSON.stringify(payload),
+                credentials: 'same-origin'
+            }
+        );
+
+        const data = await response.json();
+        
+        if (data.Row && data.Row.length > 0) {
+            const results = this.processSearchResults(data.Row);
+            console.log(`✅ Found ${results.length} matching items`);
+            this.displaySearchResults(results);
+            return results;
+        } else {
+            console.log('❌ No items found matching your search criteria');
+            return [];
+        }
+    }
+
+    // Build search ViewXml
+    buildSearchViewXml(folderPath, searchTerm, options = {}) {
+        const {
+            includeSubfolders = true,
+            fileTypesFilter = [],
+            modifiedAfter = null,
+            modifiedBefore = null,
+            sizeGreaterThan = null
+        } = options;
+
+        let whereClause = '<And>';
+        
+        // Folder filter
+        if (includeSubfolders) {
+            whereClause += `
+                <BeginsWith>
+                    <FieldRef Name="FileDirRef" />
+                    <Value Type="Text">${folderPath}</Value>
+                </BeginsWith>`;
+        } else {
+            whereClause += `
+                <Eq>
+                    <FieldRef Name="FileDirRef" />
+                    <Value Type="Text">${folderPath}</Value>
+                </Eq>`;
+        }
+        
+        // Search term filter (searches in file name)
+        whereClause += `
+            <Contains>
+                <FieldRef Name="FileLeafRef" />
+                <Value Type="Text">${searchTerm}</Value>
+            </Contains>
+        </And>`;
+
+        // Additional filters
+        if (fileTypesFilter.length > 0) {
+            let fileTypeFilter = '<Or>';
+            fileTypesFilter.forEach(ext => {
+                fileTypeFilter += `
+                    <Contains>
+                        <FieldRef Name="FileLeafRef" />
+                        <Value Type="Text">.${ext}</Value>
+                    </Contains>`;
+            });
+            fileTypeFilter += '</Or>';
+            whereClause = `<And>${whereClause}${fileTypeFilter}</And>`;
+        }
+
+        if (modifiedAfter) {
+            whereClause = `<And>${whereClause}
+                <Geq>
+                    <FieldRef Name="Modified" />
+                    <Value Type="DateTime">${modifiedAfter}</Value>
+                </Geq>
+            </And>`;
+        }
+
+        const viewXml = `<View Scope="RecursiveAll">
+            <Query>
+                <Where>${whereClause}</Where>
+                <OrderBy>
+                    <FieldRef Name="Modified" Ascending="FALSE" />
+                </OrderBy>
+            </Query>
+            <ViewFields>
+                <FieldRef Name="ID" />
+                <FieldRef Name="FileLeafRef" />
+                <FieldRef Name="FSObjType" />
+                <FieldRef Name="FileRef" />
+                <FieldRef Name="FileDirRef" />
+                <FieldRef Name="File_x0020_Size" />
+                <FieldRef Name="Modified" />
+                <FieldRef Name="Created" />
+                <FieldRef Name="Editor" />
+                <FieldRef Name="Author" />
+                <FieldRef Name="File_x0020_Type" />
+            </ViewFields>
+            <RowLimit>100</RowLimit>
+        </View>`;
+
+        return viewXml;
+    }
+
+    // Process search results
+    processSearchResults(items) {
+        return items.map(item => ({
+            id: item.ID,
+            name: item.FileLeafRef,
+            isFolder: item.FSObjType === "1",
+            type: item.FSObjType === "1" ? "Folder" : "File",
+            fileExtension: item.File_x0020_Type || 'Unknown',
+            fullPath: item.FileRef,
+            folderPath: item.FileDirRef,
+            size: this.formatFileSize(item.File_x0020_Size),
+            sizeInBytes: parseInt(item.File_x0020_Size) || 0,
+            modified: new Date(item.Modified).toLocaleString(),
+            created: new Date(item.Created).toLocaleString(),
+            modifiedBy: item.Editor ? item.Editor[0].title : 'Unknown',
+            createdBy: item.Author ? item.Author[0].title : 'Unknown'
+        }));
+    }
+
+    // Format file size
+    formatFileSize(bytes) {
+        if (!bytes || bytes === "0") return "0 Bytes";
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // Display search results
+    displaySearchResults(results) {
+        console.table(results.map(item => ({
+            Type: item.isFolder ? '📁' : '📄',
+            Name: item.name,
+            Extension: item.fileExtension,
+            Size: item.size,
+            Modified: item.modified,
+            Path: item.folderPath
+        })));
+    }
+
+    // Advanced search with multiple criteria
+    async advancedSearch(searchCriteria) {
+        const {
+            folderPath,
+            searchTerms = [],
+            fileTypes = [],
+            modifiedWithinDays = null,
+            minSize = null,
+            maxSize = null
+        } = searchCriteria;
+
+        console.log('🔍 Performing advanced search...');
+        
+        const digest = await this.getRequestDigest();
+        
+        // Build complex query
+        let whereConditions = [];
+        
+        // Folder condition
+        if (folderPath) {
+            whereConditions.push(`
+                <BeginsWith>
+                    <FieldRef Name="FileDirRef" />
+                    <Value Type="Text">${folderPath}</Value>
+                </BeginsWith>`);
+        }
+
+        // Search terms (OR condition)
+        if (searchTerms.length > 0) {
+            let searchCondition = searchTerms.length > 1 ? '<Or>' : '';
+            searchTerms.forEach(term => {
+                searchCondition += `
+                    <Contains>
+                        <FieldRef Name="FileLeafRef" />
+                        <Value Type="Text">${term}</Value>
+                    </Contains>`;
+            });
+            if (searchTerms.length > 1) searchCondition += '</Or>';
+            whereConditions.push(searchCondition);
+        }
+
+        // File types
+        if (fileTypes.length > 0) {
+            let typeCondition = fileTypes.length > 1 ? '<Or>' : '';
+            fileTypes.forEach(type => {
+                typeCondition += `
+                    <Contains>
+                        <FieldRef Name="FileLeafRef" />
+                        <Value Type="Text">.${type}</Value>
+                    </Contains>`;
+            });
+            if (fileTypes.length > 1) typeCondition += '</Or>';
+            whereConditions.push(typeCondition);
+        }
+
+        // Modified within days
+        if (modifiedWithinDays) {
+            const date = new Date();
+            date.setDate(date.getDate() - modifiedWithinDays);
+            whereConditions.push(`
+                <Geq>
+                    <FieldRef Name="Modified" />
+                    <Value Type="DateTime">${date.toISOString()}</Value>
+                </Geq>`);
+        }
+
+        // Build final where clause
+        let whereClause = '';
+        if (whereConditions.length === 1) {
+            whereClause = whereConditions[0];
+        } else if (whereConditions.length > 1) {
+            whereClause = '<And>' + whereConditions.join('') + '</And>';
+        }
+
+        const viewXml = `<View Scope="RecursiveAll">
+            <Query>
+                ${whereClause ? `<Where>${whereClause}</Where>` : ''}
+                <OrderBy>
+                    <FieldRef Name="Modified" Ascending="FALSE" />
+                </OrderBy>
+            </Query>
+            <ViewFields>
+                <FieldRef Name="ID" />
+                <FieldRef Name="FileLeafRef" />
+                <FieldRef Name="FSObjType" />
+                <FieldRef Name="FileRef" />
+                <FieldRef Name="FileDirRef" />
+                <FieldRef Name="File_x0020_Size" />
+                <FieldRef Name="Modified" />
+                <FieldRef Name="Editor" />
+                <FieldRef Name="File_x0020_Type" />
+            </ViewFields>
+            <RowLimit>500</RowLimit>
+        </View>`;
+
+        const payload = {
+            parameters: {
+                RenderOptions: 2,
+                ViewXml: viewXml,
+                AllowMultipleValueFilterForTaxonomyFields: true
+            }
+        };
+
+        const response = await fetch(
+            `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/RenderListDataAsStream`,
+            {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json;odata=nometadata',
+                    'Content-Type': 'application/json;odata=verbose',
+                    'X-RequestDigest': digest
+                },
+                body: JSON.stringify(payload),
+                credentials: 'same-origin'
+            }
+        );
+
+        const data = await response.json();
+        
+        if (data.Row && data.Row.length > 0) {
+            const results = this.processSearchResults(data.Row);
+            console.log(`✅ Found ${results.length} items matching advanced search criteria`);
+            return results;
+        } else {
+            console.log('❌ No items found');
+            return [];
+        }
+    }
+}
+
+// Usage Examples
+async function searchExamples() {
+    const siteUrl = 'https://yourtenant.sharepoint.com/sites/yoursite';
+    const libraryName = 'Documents';
+    
+    const searcher = new SharePointFolderSearch(siteUrl, libraryName);
+    
+    // Example 1: Simple search in a folder
+    console.log('\n📋 Example 1: Simple Search');
+    await searcher.searchInFolder(
+        '/sites/yoursite/Documents/ProjectFiles',
+        'report'
+    );
+    
+    // Example 2: Search with options
+    console.log('\n📋 Example 2: Search with Options');
+    await searcher.searchInFolder(
+        '/sites/yoursite/Documents/ProjectFiles',
+        'data',
+        {
+            includeSubfolders: true,
+            fileTypesFilter: ['xlsx', 'csv'],
+            modifiedAfter: '2024-01-01T00:00:00Z'
+        }
+    );
+    
+    // Example 3: Advanced search
+    console.log('\n📋 Example 3: Advanced Search');
+    await searcher.advancedSearch({
+        folderPath: '/sites/yoursite/Documents',
+        searchTerms: ['budget', 'finance', 'report'],
+        fileTypes: ['xlsx', 'docx', 'pdf'],
+        modifiedWithinDays: 30
+    });
+}
+
+// Run search examples
+// searchExamples();</code></pre>
+            <button class="copy-btn" onclick="copyCode('code2')">Copy Code</button>
+        </div>
+
+        <div class="section">
+            <h2>🎯 3. Combined Usage Example</h2>
+            <div class="note">
+                <strong>Complete Example:</strong> This demonstrates how to use both functions together.
+            </div>
+            <pre><code id="code3">// Complete SharePoint Document Management Solution
+// Combines pagination fetching and search capabilities
+
+async function completeSharePointSolution() {
+    // Configuration
+    const config = {
+        siteUrl: 'https://yourtenant.sharepoint.com/sites/yoursite',
+        libraryName: 'Documents',
+        targetFolder: '/sites/yoursite/Documents/ProjectFiles'
+    };
+    
+    console.log('🚀 SharePoint Document Management Console Tool');
+    console.log('=' . repeat(50));
+    
+    try {
+        // Step 1: Fetch all documents with pagination
+        console.log('\n📁 STEP 1: Fetching all documents with pagination...\n');
+        const fetcher = new SharePointDocumentFetcher(config.siteUrl, config.libraryName);
+        const allItems = await fetcher.fetchItemsWithPagination();
+        
+        // Display summary
+        console.log('\n📊 Summary:');
+        console.log(`Total Items: ${allItems.length}`);
+        console.log(`Folders: ${allItems.filter(i => i.isFolder).length}`);
+        console.log(`Files: ${allItems.filter(i => !i.isFolder).length}`);
+        
+        // Calculate total size
+        const totalSize = allItems
+            .filter(i => !i.isFolder)
+            .reduce((sum, item) => sum + item.sizeInBytes, 0);
+        console.log(`Total Size: ${fetcher.formatFileSize(totalSize)}`);
+        
+        // Step 2: Search for specific files
+        console.log('\n🔍 STEP 2: Searching for specific files...\n');
+        const searcher = new SharePointFolderSearch(config.siteUrl, config.libraryName);
+        
+        // Search for Excel files modified in last 7 days
+        const recentExcelFiles = await searcher.advancedSearch({
+            folderPath: config.targetFolder,
+            fileTypes: ['xlsx', 'xls'],
+            modifiedWithinDays: 7
+        });
+        
+        if (recentExcelFiles.length > 0) {
+            console.log(`\n📈 Recent Excel files (last 7 days): ${recentExcelFiles.length}`);
+            recentExcelFiles.forEach(file => {
+                console.log(`  📊 ${file.name} - ${file.size} - Modified: ${file.modified}`);
+            });
+        }
+        
+        // Search for documents containing specific keywords
+        console.log('\n📝 Searching for documents with keywords...');
+        const keywordResults = await searcher.searchInFolder(
+            config.targetFolder,
+            'project',
+            { includeSubfolders: true }
+        );
+        
+        // Generate report
+        console.log('\n📋 FINAL REPORT');
+        console.log('=' . repeat(50));
+        console.log(`Total Documents Processed: ${allItems.length}`);
+        console.log(`Search Results Found: ${keywordResults.length}`);
+        console.log(`Recent Excel Files: ${recentExcelFiles.length}`);
+        
+        // Return data for further processing
+        return {
+            allItems,
+            searchResults: keywordResults,
+            recentFiles: recentExcelFiles,
+            summary: {
+                totalItems: allItems.length,
+                totalFolders: allItems.filter(i => i.isFolder).length,
+                totalFiles: allItems.filter(i => !i.isFolder).length,
+                totalSize: fetcher.formatFileSize(totalSize)
+            }
+        };
+        
+    } catch (error) {
+        console.error('❌ Error in SharePoint operation:', error);
+        console.error('Stack trace:', error.stack);
+    }
+}
+
+// Helper function to export results to CSV
+function exportToCSV(items, filename = 'sharepoint_export.csv') {
+    const headers = ['Type', 'Name', 'Size', 'Modified', 'Modified By', 'Path'];
+    const rows = items.map(item => [
+        item.isFolder ? 'Folder' : 'File',
+        item.name,
+        item.size,
+        item.modified,
+        item.modifiedBy,
+        item.serverRelativeUrl
+    ]);
+    
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    
+    console.log(`✅ Exported ${items.length} items to ${filename}`);
+}
+
+// Run the complete solution
+// completeSharePointSolution().then(results => {
+//     console.log('✨ Operation completed successfully!');
+//     // Optional: Export results to CSV
+//     // exportToCSV(results.allItems, 'all_documents.csv');
+// });</code></pre>
+            <button class="copy-btn" onclick="copyCode('code3')">Copy Code</button>
+        </div>
+
+        <div class="usage">
+            <h3>🔧 How to Use:</h3>
+            <ol>
+                <li><strong>Open Browser Console:</strong> Press F12 in your browser while on your SharePoint site</li>
+                <li><strong>Update Configuration:</strong> Replace the placeholder URLs and library names with your actual values</li>
+                <li><strong>Copy & Paste:</strong> Copy the desired script and paste it into the console</li>
+                <li><strong>Run Functions:</strong> Uncomment the function calls at the bottom of each script to execute</li>
+                <li><strong>Authentication:</strong> Ensure you're logged into SharePoint before running these scripts</li>
+            </ol>
+        </div>
+
+        <div class="note">
+            <h3>⚠️ Important Notes:</h3>
+            <ul>
+                <li>These scripts work when you're authenticated to SharePoint Online in your browser</li>
+                <li>The batch size is set to 5 items as requested, but can be adjusted</li>
+                <li>All scripts include comprehensive error handling and logging</li>
+                <li>The search function supports both simple and advanced search scenarios</li>
+                <li>Results can be exported to CSV for further analysis</li>
+            </ul>
+        </div>
